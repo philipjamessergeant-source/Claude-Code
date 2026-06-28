@@ -61,6 +61,14 @@ const INTENT_OPTIONS = [
   { id: "not_now", title: "Not right now" },
 ];
 
+const EVENT_TYPE_LABELS_FOR_RESUME = {
+  wedding: "wedding",
+  conference: "conference",
+  high_tea: "high tea",
+  corporate_event: "corporate gifting",
+  private_event: "event",
+};
+
 function eventTypeReaction(eventType) {
   switch (eventType) {
     case "wedding":
@@ -416,6 +424,8 @@ const flow = {
         ],
         nextState: "ended_soft_decline",
         sessionUpdates: { wantsContact: "not_now" },
+        triggerAreevaNotification: true,
+        areevaNotificationType: "not_now",
       };
     }
 
@@ -429,16 +439,49 @@ const flow = {
       nextState: "ended_warm_handoff",
       sessionUpdates: { wantsContact: "yes" },
       triggerAreevaNotification: true,
+      areevaNotificationType: "warm_handoff",
     };
   },
 
-  // Terminal states - if a user messages again after these, restart a fresh enquiry.
+  // Terminal states.
   ended_b2c_deflect(session, userText) {
     return flow.start(session);
   },
+
+  // If someone who said "not right now" messages back, don't restart from
+  // zero - acknowledge them by name (if we have it) and ask directly
+  // whether they're ready to move forward, since we already have all
+  // their event details saved in session.data.
   ended_soft_decline(session, userText) {
-    return flow.start(session);
+    const d = session.data;
+    const hasDetails = d.eventType && d.guestCount && d.budgetTier;
+
+    if (!hasDetails) {
+      // Safety fallback: if for some reason we don't actually have their
+      // details saved (e.g. they declined very early), just restart cleanly
+      // rather than referencing information we don't have.
+      return flow.start(session);
+    }
+
+    const greeting = d.contactName ? `Hi ${d.contactName}, lovely to hear from you again!` : "Hi again, lovely to hear from you!";
+
+    return {
+      messages: [
+        {
+          type: "list",
+          header: "Next step",
+          body: `${greeting} We've still got everything you shared with us earlier about your ${
+            EVENT_TYPE_LABELS_FOR_RESUME[d.eventType] || "event"
+          }. Would you like our team to jump into this chat now to talk through options?`,
+          buttonText: "Choose an option",
+          options: INTENT_OPTIONS,
+        },
+      ],
+      nextState: "awaiting_intent",
+      sessionUpdates: {},
+    };
   },
+
   ended_warm_handoff(session, userText) {
     return flow.start(session);
   },
