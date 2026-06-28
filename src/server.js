@@ -4,6 +4,7 @@ const { flow } = require("./flow");
 const { getSession, saveSession, resetSession } = require("./store");
 const { sendMessages, parseIncomingMessage } = require("./whatsapp");
 const { notifyAreeva } = require("./notifyAreeva");
+const { runRetargetingCheck, handlePotentialAreevaCommand } = require("./retargeting");
 
 const app = express();
 app.use(express.json());
@@ -47,17 +48,25 @@ app.post("/webhook", async (req, res) => {
 
     console.log(`Incoming message from ${fromPhoneNumber}: "${text}" (buttonId: ${buttonId})`);
 
-    const session = getSession(fromPhoneNumber);
+    // If this message is Areeva replying YES/SKIP to a retargeting
+    // approval request, handle it here and stop - it's not a real lead
+    // message and shouldn't be run through the normal qualification flow.
+    const wasAreevaCommand = await handlePotentialAreevaCommand(fromPhoneNumber, text);
+    if (wasAreevaCommand) {
+      return;
+    }
+
+    const session = await getSession(fromPhoneNumber);
     const handler = flow[session.state] || flow.start;
     const result = handler(session, text, buttonId);
 
-    saveSession(fromPhoneNumber, result);
+    await saveSession(fromPhoneNumber, result);
 
     await sendMessages(fromPhoneNumber, result.messages);
 
     if (result.triggerAreevaNotification) {
-      const updatedSession = getSession(fromPhoneNumber);
-      await notifyAreeva(updatedSession);
+      const updatedSession = await getSession(fromPhoneNumber);
+      await notifyAreeva(updatedSession, result.areevaNotificationType);
     }
   } catch (err) {
     console.error("Error handling incoming message:", err);
@@ -68,13 +77,29 @@ app.post("/webhook", async (req, res) => {
 // Call this (e.g. via Postman or curl) to reset a phone number's
 // conversation state back to the start, without waiting for a real
 // WhatsApp message. Not exposed to end users.
-app.post("/admin/reset-session", (req, res) => {
+app.post("/admin/reset-session", async (req, res) => {
   const { phoneNumber, adminKey } = req.body;
   if (adminKey !== process.env.ADMIN_RESET_KEY) {
     return res.sendStatus(403);
   }
-  resetSession(phoneNumber);
+  await resetSession(phoneNumber);
   return res.json({ reset: true, phoneNumber });
+});
+
+// ─── Retargeting: daily check trigger ──────────────────────────────────────
+// This endpoint runs the retargeting check described in retargeting.js -
+// finds leads who said "not now" 3+ days ago, and sends Areeva a WhatsApp
+// message per candidate asking her to approve or skip. Point Railway's
+// Cron Schedule (Settings -> Deploy -> Cron Schedule) at this endpoint
+// once daily, e.g. "0 9 * * *" for 9am, with the ADMIN_RESET_KEY in the
+// request body.
+app.post("/admin/retargeting/run-check", async (req, res) => {
+  const { adminKey } = req.body;
+  if (adminKey !== process.env.ADMIN_RESET_KEY) {
+    return res.sendStatus(403);
+  }
+  const result = await runRetargetingCheck();
+  return res.json(result);
 });
 
 // ─── Health check ───────────────────────────────────────────────────────────
