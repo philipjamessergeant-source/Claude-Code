@@ -42,13 +42,23 @@ const EVENT_TYPE_LABELS = {
   private_event: "Private event",
 };
 
-function formatLeadSummary(session) {
+function formatLeadSummary(session, notificationType) {
   const d = session.data;
   const eventTypeLabel =
     d.eventType === "other" ? d.eventTypeOther : EVENT_TYPE_LABELS[d.eventType] || d.eventType || "-";
 
+  const headerLine =
+    notificationType === "not_now"
+      ? "\uD83C\uDF3F Chai Society lead - not ready to be contacted yet"
+      : "\uD83C\uDF3F New qualified Chai Society lead";
+
+  const footerLine =
+    notificationType === "not_now"
+      ? "They said \"not right now\" when asked if we should reach out, so please do NOT contact them directly yet. Worth keeping for a future retargeting follow-up."
+      : "They've confirmed they want to be contacted, this is a warm lead, please follow up promptly.";
+
   const lines = [
-    "\uD83C\uDF3F New qualified Chai Society lead",
+    headerLine,
     "",
     `From: ${session.phoneNumber}`,
     `Contact name: ${d.contactName || "-"}`,
@@ -59,13 +69,13 @@ function formatLeadSummary(session) {
     `Budget tier: ${BUDGET_LABELS[d.budgetTier] || d.budgetTier || "-"}`,
     `Special notes: ${d.specialNotes || "-"}`,
     "",
-    "They've confirmed they want to be contacted, this is a warm lead, please follow up promptly.",
+    footerLine,
   ];
   return lines.join("\n");
 }
 
-async function notifyAreeva(session) {
-  const summary = formatLeadSummary(session);
+async function notifyAreeva(session, notificationType = "warm_handoff") {
+  const summary = formatLeadSummary(session, notificationType);
 
   // Always log, regardless of whether a delivery channel is configured,
   // so the lead is never silently lost even if WhatsApp delivery fails.
