@@ -1,0 +1,17 @@
+{
+  "name": "chai-society-whatsapp-qualifier",
+  "version": "1.0.0",
+  "description": "Chai Society events & corporate gifting WhatsApp lead qualification bot, built directly on Meta's WhatsApp Cloud API.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "axios": "^1.7.2",
+    "dotenv": "^16.4.5"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

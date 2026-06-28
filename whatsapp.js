@@ -1,0 +1,123 @@
+/**
+ * WhatsApp Cloud API client.
+ *
+ * Converts our internal message objects (from flow.js) into the exact
+ * payload shape the WhatsApp Cloud API expects, and sends them via axios.
+ *
+ * Required environment variables (set these in Railway):
+ *   WHATSAPP_TOKEN          - permanent system user access token
+ *   WHATSAPP_PHONE_NUMBER_ID - the phone number ID from Meta's API Setup panel
+ *   WHATSAPP_API_VERSION    - e.g. "v19.0" (optional, defaults below)
+ */
+
+const axios = require("axios");
+
+const API_VERSION = process.env.WHATSAPP_API_VERSION || "v19.0";
+
+function apiUrl() {
+  const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
+  return `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/messages`;
+}
+
+function authHeaders() {
+  return {
+    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+    "Content-Type": "application/json",
+  };
+}
+
+/**
+ * Converts one of our internal message objects into a WhatsApp Cloud API
+ * payload. Supports two types:
+ *   { type: "text", text: "..." }
+ *   { type: "list", header, body, buttonText, options: [{id, title}] }
+ *
+ * WhatsApp's interactive list messages support a maximum of 10 rows per
+ * list. All our option lists (event type, guest count, budget, intent)
+ * are well under that limit, so no pagination logic is needed here.
+ */
+function buildPayload(toPhoneNumber, message) {
+  if (message.type === "text") {
+    return {
+      messaging_product: "whatsapp",
+      to: toPhoneNumber,
+      type: "text",
+      text: { body: message.text },
+    };
+  }
+
+  if (message.type === "list") {
+    return {
+      messaging_product: "whatsapp",
+      to: toPhoneNumber,
+      type: "interactive",
+      interactive: {
+        type: "list",
+        header: { type: "text", text: message.header },
+        body: { text: message.body },
+        action: {
+          button: message.buttonText || "Choose an option",
+          sections: [
+            {
+              title: message.header,
+              rows: message.options.map((opt) => ({
+                id: opt.id,
+                title: opt.title,
+              })),
+            },
+          ],
+        },
+      },
+    };
+  }
+
+  throw new Error(`Unknown message type: ${message.type}`);
+}
+
+async function sendMessage(toPhoneNumber, message) {
+  const payload = buildPayload(toPhoneNumber, message);
+  try {
+    const response = await axios.post(apiUrl(), payload, { headers: authHeaders() });
+    return response.data;
+  } catch (err) {
+    const detail = err.response?.data || err.message;
+    console.error("Failed to send WhatsApp message:", JSON.stringify(detail));
+    throw err;
+  }
+}
+
+async function sendMessages(toPhoneNumber, messages) {
+  const results = [];
+  for (const message of messages) {
+    // Sent sequentially (not in parallel) so they arrive in the same
+    // order they were written, which matters for a conversational flow.
+    const result = await sendMessage(toPhoneNumber, message);
+    results.push(result);
+  }
+  return results;
+}
+
+/**
+ * Extracts the user's reply from an incoming webhook message object.
+ * Returns { text, buttonId } - buttonId is set only if the user tapped
+ * a list option; text is the raw text otherwise (or the option's title,
+ * for logging/readability, when a list option was selected).
+ */
+function parseIncomingMessage(message) {
+  if (message.type === "text") {
+    return { text: message.text.body, buttonId: null };
+  }
+  if (message.type === "interactive") {
+    const listReply = message.interactive?.list_reply;
+    if (listReply) {
+      return { text: listReply.title, buttonId: listReply.id };
+    }
+    const buttonReply = message.interactive?.button_reply;
+    if (buttonReply) {
+      return { text: buttonReply.title, buttonId: buttonReply.id };
+    }
+  }
+  return { text: "", buttonId: null };
+}
+
+module.exports = { sendMessage, sendMessages, parseIncomingMessage };
