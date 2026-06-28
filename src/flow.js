@@ -51,6 +51,11 @@ const BUDGET_OPTIONS = [
   { id: "unsure", title: "Not sure yet" },
 ];
 
+const HAS_COMPANY_OPTIONS = [
+  { id: "yes", title: "Yes" },
+  { id: "no", title: "No, just for me" },
+];
+
 const INTENT_OPTIONS = [
   { id: "yes_contact", title: "Yes, please reach out" },
   { id: "not_now", title: "Not right now" },
@@ -300,13 +305,60 @@ const flow = {
     return {
       messages: [
         { type: "text", text: recommendationText(budgetTier) },
+        { type: "text", text: "One more thing, what's your name?" },
+      ],
+      nextState: "awaiting_contact_name",
+      sessionUpdates: { budgetTier },
+    };
+  },
+
+  awaiting_contact_name(session, userText) {
+    return {
+      messages: [
         {
-          type: "text",
-          text: "One more thing, who should we pop this enquiry down under, your name or your company's?",
+          type: "list",
+          header: "Company",
+          body: `Lovely to meet you, ${userText}. Is this enquiry on behalf of a company or organisation?`,
+          buttonText: "Choose an option",
+          options: HAS_COMPANY_OPTIONS,
         },
       ],
-      nextState: "awaiting_company_name",
-      sessionUpdates: { budgetTier },
+      nextState: "awaiting_has_company",
+      sessionUpdates: { contactName: userText },
+    };
+  },
+
+  awaiting_has_company(session, userText, userButtonId) {
+    const hasCompany = userButtonId;
+    if (!hasCompany) {
+      return {
+        messages: [
+          {
+            type: "list",
+            header: "Company",
+            body: "Please choose one of the options below.",
+            buttonText: "Choose an option",
+            options: HAS_COMPANY_OPTIONS,
+          },
+        ],
+        nextState: "awaiting_has_company",
+        sessionUpdates: {},
+      };
+    }
+
+    if (hasCompany === "yes") {
+      return {
+        messages: [{ type: "text", text: "Great, what's the company or organisation's name?" }],
+        nextState: "awaiting_company_name",
+        sessionUpdates: {},
+      };
+    }
+
+    const eventType = session.data.eventType;
+    return {
+      messages: [{ type: "text", text: specialNotesQuestion(eventType) }],
+      nextState: "awaiting_special_notes",
+      sessionUpdates: { companyName: null },
     };
   },
 
@@ -315,7 +367,7 @@ const flow = {
     return {
       messages: [{ type: "text", text: specialNotesQuestion(eventType) }],
       nextState: "awaiting_special_notes",
-      sessionUpdates: { companyOrName: userText },
+      sessionUpdates: { companyName: userText },
     };
   },
 
