@@ -30,6 +30,11 @@ app.post("/webhook", async (req, res) => {
   // and we don't want duplicate processing if our own logic is slow.
   res.sendStatus(200);
 
+  // TEMPORARY DEBUG LOGGING - remove once the message flow is confirmed working.
+  console.log("=== RAW WEBHOOK PAYLOAD ===");
+  console.log(JSON.stringify(req.body, null, 2));
+  console.log("===========================");
+
   try {
     const entry = req.body.entry?.[0];
     const change = entry?.changes?.[0];
