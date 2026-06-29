@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const { flow } = require("./flow");
-const { resetSession, processSession } = require("./store");
+const { resetSession, processSession, findStalledLeads, markStalledNotified } = require("./store");
 const { sendMessages, parseIncomingMessage } = require("./whatsapp");
 const { notifyAreeva } = require("./notifyAreeva");
 const { runRetargetingCheck, handlePotentialAreevaCommand } = require("./retargeting");
@@ -104,6 +104,31 @@ app.post("/admin/retargeting/run-check", async (req, res) => {
   }
   const result = await runRetargetingCheck();
   return res.json(result);
+});
+
+// ─── One-off / reusable: notify Areeva about leads stuck mid-flow ─────────
+// Finds sessions that answered enough to be useful (event type, guest
+// count, budget on file) but never reached awaiting_intent due to the
+// session-store race condition that was fixed in processSession. Notifies
+// Areeva directly for each one - does NOT message the lead again, since
+// we never got their actual answer to "should we reach out?" Safe to run
+// more than once; already-notified leads are skipped automatically.
+app.post("/admin/notify-stalled-leads", async (req, res) => {
+  const { adminKey } = req.body;
+  if (adminKey !== process.env.ADMIN_RESET_KEY) {
+    return res.sendStatus(403);
+  }
+
+  const stalledLeads = await findStalledLeads();
+  const notified = [];
+
+  for (const session of stalledLeads) {
+    await notifyAreeva(session, "warm_handoff");
+    await markStalledNotified(session.phoneNumber);
+    notified.push(session.phoneNumber);
+  }
+
+  return res.json({ notifiedCount: notified.length, notifiedNumbers: notified });
 });
 
 // ─── Health check ───────────────────────────────────────────────────────────
