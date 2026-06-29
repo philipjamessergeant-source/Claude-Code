@@ -164,7 +164,6 @@ async function resetSession(phoneNumber) {
   await ensureTable();
   await pool.query(`DELETE FROM whatsapp_sessions WHERE phone_number = $1`, [phoneNumber]);
 }
-
 /**
  * Used by the retargeting job (see retargeting.js) to find leads who
  * said "not right now" a specific number of days ago and haven't been
@@ -174,4 +173,72 @@ async function findStaleSoftDeclines(daysAgo) {
   await ensureTable();
   const result = await pool.query(
     `SELECT phone_number, state, data, updated_at FROM whatsapp_sessions
-     WHERE
+     WHERE state = 'ended_soft_decline'
+       AND (data->>'retargeted') IS NULL
+       AND updated_at <= now() - ($1 || ' days')::interval`,
+    [daysAgo]
+  );
+  return result.rows.map((row) => ({
+    phoneNumber: row.phone_number,
+    state: row.state,
+    data: row.data,
+    updatedAt: row.updated_at,
+  }));
+}
+
+/**
+ * Finds leads who answered enough to be useful (they reached at least
+ * awaiting_special_notes or awaiting_intent - meaning they have an event
+ * type, guest count, and budget on file) but never triggered the original
+ * Areeva notification, because their session stalled before reaching
+ * awaiting_intent. This was caused by a race condition in the old
+ * getSession/saveSession pair, fixed by processSession.
+ *
+ * Excludes anyone already in a terminal state (ended_warm_handoff,
+ * ended_soft_decline, ended_b2c_deflect) since those already went
+ * through the normal notification path and shouldn't be double-notified.
+ *
+ * Excludes anyone already marked notifiedStalled: true, so this function
+ * is safe to run more than once - it only picks up genuinely new finds
+ * each time.
+ */
+async function findStalledLeads() {
+  await ensureTable();
+  const result = await pool.query(`
+    SELECT phone_number, state, data, updated_at FROM whatsapp_sessions
+    WHERE state IN ('awaiting_special_notes', 'awaiting_intent')
+      AND data->>'budgetTier' IS NOT NULL
+      AND (data->>'notifiedStalled') IS NULL
+  `);
+  return result.rows.map((row) => ({
+    phoneNumber: row.phone_number,
+    state: row.state,
+    data: row.data,
+    updatedAt: row.updated_at,
+  }));
+}
+
+/**
+ * Marks a session as having been picked up by the stalled-leads notifier,
+ * so re-running findStalledLeads/notify-stalled-leads later won't
+ * re-notify Areeva about the same lead.
+ */
+async function markStalledNotified(phoneNumber) {
+  await ensureTable();
+  await pool.query(
+    `UPDATE whatsapp_sessions
+     SET data = data || '{"notifiedStalled": true}'::jsonb, updated_at = now()
+     WHERE phone_number = $1`,
+    [phoneNumber]
+  );
+}
+
+module.exports = {
+  getSession,
+  saveSession,
+  resetSession,
+  findStaleSoftDeclines,
+  processSession,
+  findStalledLeads,
+  markStalledNotified,
+};
