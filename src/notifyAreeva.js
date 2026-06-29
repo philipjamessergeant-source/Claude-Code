@@ -10,14 +10,28 @@
  * even though the API call itself looks successful - this was
  * discovered the hard way, so don't revert to sendMessage for this.
  *
+ * IMPORTANT: the WhatsApp template is only ever sent for warm_handoff
+ * leads (customer said "Yes, please reach out"). For not_now leads
+ * (customer said "Not right now"), we deliberately do NOT send Areeva
+ * anything via WhatsApp - those leads are handled by the retargeting
+ * cron job (see retargeting.js) days later, and pinging Areeva
+ * immediately would contradict the customer's explicit request not to
+ * be contacted yet. We still always log to Railway either way, so
+ * nothing is ever silently lost - it's just not pushed to WhatsApp for
+ * the not_now case.
+ *
  * Template body (approved, Marketing category):
  *   New Chai Society lead: {{1}}
+ *   Phone: {{2}}
+ *   Company: {{3}}
  *
- *   Event: {{2}}
- *   Guest count: {{3}}
- *   Budget: {{4}}
+ *   Event: {{4}}
+ *   Guest count: {{5}}
+ *   Event date: {{6}}
+ *   Budget: {{7}}
+ *   Notes: {{8}}
  *
- *   Status: {{5}}. Please follow up in WhatsApp.
+ *   Status: Warm lead - please follow up in WhatsApp.
  *
  * Required environment variable:
  *   AREEVA_WHATSAPP_NUMBER - Areeva's WhatsApp number in international
@@ -52,6 +66,29 @@ const EVENT_TYPE_LABELS = {
   private_event: "Private event",
 };
 
+/**
+ * Sanitizes free-text customer input (specialNotes) before it's passed
+ * into an approved WhatsApp template variable. Customer-typed text is
+ * unpredictable - it could contain a URL, excessive length, or unusual
+ * characters - and templates that pass raw user content into variables
+ * are more likely to be flagged or rejected by Meta's review, and are
+ * also just a bad idea to forward unfiltered regardless.
+ */
+function sanitizeForTemplate(text, maxLength = 100) {
+  if (!text) return "-";
+
+  let cleaned = text
+    .replace(/https?:\/\/\S+/gi, "[link removed]") // strip URLs
+    .replace(/\s+/g, " ") // collapse whitespace/newlines
+    .trim();
+
+  if (cleaned.length > maxLength) {
+    cleaned = cleaned.slice(0, maxLength - 3).trim() + "...";
+  }
+
+  return cleaned || "-";
+}
+
 function formatLeadSummary(session, notificationType) {
   const d = session.data;
   const eventTypeLabel =
@@ -82,22 +119,23 @@ function formatLeadSummary(session, notificationType) {
 }
 
 /**
- * Builds the five {{1}}..{{5}} values for the approved template, in
- * order, from a session. Keeps the same underlying fields as the old
- * free-text summary, just condensed to fit the template's variables.
+ * Builds the eight {{1}}..{{8}} values for the approved template, in
+ * order. Only ever called for warm_handoff leads - see notifyAreeva.
  */
-function formatTemplateParameters(session, notificationType) {
+function formatTemplateParameters(session) {
   const d = session.data;
   const eventTypeLabel =
     d.eventType === "other" ? d.eventTypeOther : EVENT_TYPE_LABELS[d.eventType] || d.eventType || "-";
-  const statusText = notificationType === "not_now" ? "Not ready to be contacted yet" : "Warm lead";
 
   return [
     d.contactName || session.phoneNumber,
+    session.phoneNumber,
+    d.companyName || "Not company gifting, personal/individual enquiry",
     eventTypeLabel,
     GUEST_COUNT_LABELS[d.guestCount] || d.guestCount || "-",
+    d.eventDate || "-",
     BUDGET_LABELS[d.budgetTier] || d.budgetTier || "-",
-    statusText,
+    sanitizeForTemplate(d.specialNotes),
   ];
 }
 
@@ -109,6 +147,14 @@ async function notifyAreeva(session, notificationType = "warm_handoff") {
   console.log(summary);
   console.log("===========================");
 
+  // Only warm, confirmed leads get pushed to Areeva's WhatsApp. "Not
+  // now" leads are deliberately left out of WhatsApp delivery - see the
+  // file header comment for why - but they're still fully logged above,
+  // and still picked up later by the retargeting cron job.
+  if (notificationType !== "warm_handoff") {
+    return { delivered: false, reason: "not_now leads are not sent to WhatsApp, log only" };
+  }
+
   const areevaNumber = process.env.AREEVA_WHATSAPP_NUMBER;
   if (!areevaNumber) {
     console.warn(
@@ -119,7 +165,7 @@ async function notifyAreeva(session, notificationType = "warm_handoff") {
   }
 
   try {
-    const parameters = formatTemplateParameters(session, notificationType);
+    const parameters = formatTemplateParameters(session);
     await sendTemplateMessage(areevaNumber, TEMPLATE_NAME, TEMPLATE_LANGUAGE, parameters);
     return { delivered: true };
   } catch (err) {
