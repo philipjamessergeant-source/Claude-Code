@@ -17,10 +17,13 @@
  *   2. That's it. This file creates its own table automatically on first
  *      run (see ensureTable below).
  *
- * getSession/saveSession/resetSession are now async (they return
- * Promises), since they talk to a real database instead of an in-memory
- * Map. Every call site in server.js and flow.js has been updated to
- * await them.
+ * Concurrency note: processSession() wraps the read-handle-write cycle in
+ * a single Postgres transaction using SELECT ... FOR UPDATE. This means
+ * if two WhatsApp messages from the same phone number arrive at nearly
+ * the same time (common during traffic bursts from active ad campaigns),
+ * the second one waits for the first to fully finish reading, updating,
+ * and committing before it gets its turn - instead of both reading stale
+ * data and one silently overwriting the other's progress.
  */
 
 const { Pool } = require("pg");
@@ -79,6 +82,65 @@ async function getSession(phoneNumber) {
   return fresh;
 }
 
+/**
+ * Runs the full read -> handle -> write cycle for one incoming message,
+ * inside a single Postgres transaction with a row lock on this phone
+ * number's session. `handlerFn` receives the locked, up-to-date session
+ * and must return the same { messages, nextState, sessionUpdates,
+ * triggerAreevaNotification, areevaNotificationType } shape the flow
+ * handlers already return.
+ *
+ * Why this matters: if two messages from the same number arrive close
+ * together, the second call's SELECT ... FOR UPDATE will block until the
+ * first transaction commits, so it always sees the first message's
+ * result before deciding what to do with the second. No more silently
+ * stale reads, no more lost sessionUpdates.
+ */
+async function processSession(phoneNumber, handlerFn) {
+  await ensureTable();
+
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+
+    const existing = await client.query(
+      `SELECT phone_number, state, data FROM whatsapp_sessions WHERE phone_number = $1 FOR UPDATE`,
+      [phoneNumber]
+    );
+
+    let session;
+    if (existing.rows.length > 0) {
+      const row = existing.rows[0];
+      session = { phoneNumber: row.phone_number, state: row.state, data: row.data };
+    } else {
+      session = { phoneNumber, state: "start", data: {} };
+      await client.query(
+        `INSERT INTO whatsapp_sessions (phone_number, state, data) VALUES ($1, $2, $3)`,
+        [session.phoneNumber, session.state, session.data]
+      );
+    }
+
+    const result = await handlerFn(session);
+
+    const newState = result.nextState || session.state;
+    const newData = result.sessionUpdates ? { ...session.data, ...result.sessionUpdates } : session.data;
+
+    await client.query(
+      `UPDATE whatsapp_sessions SET state = $2, data = $3, updated_at = now() WHERE phone_number = $1`,
+      [phoneNumber, newState, newData]
+    );
+
+    await client.query("COMMIT");
+
+    return { result, updatedSession: { phoneNumber, state: newState, data: newData } };
+  } catch (err) {
+    await client.query("ROLLBACK");
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 async function saveSession(phoneNumber, updates) {
   await ensureTable();
 
@@ -125,4 +187,4 @@ async function findStaleSoftDeclines(daysAgo) {
   }));
 }
 
-module.exports = { getSession, saveSession, resetSession, findStaleSoftDeclines };
+module.exports = { getSession, saveSession, resetSession, findStaleSoftDeclines, processSession };
