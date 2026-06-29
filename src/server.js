@@ -38,8 +38,21 @@ app.post("/webhook", async (req, res) => {
     const message = value?.messages?.[0];
 
     if (!message) {
-      // This is most likely a status update (delivered/read receipt),
-      // not an actual incoming message - nothing to do.
+      // No inbound message - this is most likely a status update
+      // (sent/delivered/read/failed) for a message we sent out, e.g. a
+      // lead notification to Areeva. Log it so we have real proof of
+      // delivery instead of just assuming the API accepted the request -
+      // this is what caught the original "logged as sent but never
+      // arrived" issue with Areeva's 24-hour window problem.
+      const statuses = value?.statuses;
+      if (statuses && statuses.length > 0) {
+        for (const status of statuses) {
+          console.log(
+            `=== MESSAGE STATUS === to: ${status.recipient_id} | status: ${status.status} | message_id: ${status.id}` +
+              (status.errors ? ` | errors: ${JSON.stringify(status.errors)}` : "")
+          );
+        }
+      }
       return;
     }
 
