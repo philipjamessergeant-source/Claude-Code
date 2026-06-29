@@ -174,17 +174,4 @@ async function findStaleSoftDeclines(daysAgo) {
   await ensureTable();
   const result = await pool.query(
     `SELECT phone_number, state, data, updated_at FROM whatsapp_sessions
-     WHERE state = 'ended_soft_decline'
-       AND (data->>'retargeted') IS NULL
-       AND updated_at <= now() - ($1 || ' days')::interval`,
-    [daysAgo]
-  );
-  return result.rows.map((row) => ({
-    phoneNumber: row.phone_number,
-    state: row.state,
-    data: row.data,
-    updatedAt: row.updated_at,
-  }));
-}
-
-module.exports = { getSession, saveSession, resetSession, findStaleSoftDeclines, processSession };
+     WHERE
