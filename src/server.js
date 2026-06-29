@@ -1,7 +1,7 @@
 require("dotenv").config();
 const express = require("express");
 const { flow } = require("./flow");
-const { getSession, saveSession, resetSession } = require("./store");
+const { resetSession, processSession } = require("./store");
 const { sendMessages, parseIncomingMessage } = require("./whatsapp");
 const { notifyAreeva } = require("./notifyAreeva");
 const { runRetargetingCheck, handlePotentialAreevaCommand } = require("./retargeting");
@@ -56,16 +56,20 @@ app.post("/webhook", async (req, res) => {
       return;
     }
 
-    const session = await getSession(fromPhoneNumber);
-    const handler = flow[session.state] || flow.start;
-    const result = handler(session, text, buttonId);
-
-    await saveSession(fromPhoneNumber, result);
+    // processSession locks this phone number's session row for the
+    // duration of the transaction, so if two messages arrive close
+    // together (e.g. during a burst of new ad traffic), the second one
+    // waits for the first to fully commit before reading - preventing
+    // the stale-read race that was silently dropping sessionUpdates and
+    // causing some conversations to stall before reaching awaiting_intent.
+    const { result, updatedSession } = await processSession(fromPhoneNumber, async (session) => {
+      const handler = flow[session.state] || flow.start;
+      return handler(session, text, buttonId);
+    });
 
     await sendMessages(fromPhoneNumber, result.messages);
 
     if (result.triggerAreevaNotification) {
-      const updatedSession = await getSession(fromPhoneNumber);
       await notifyAreeva(updatedSession, result.areevaNotificationType);
     }
   } catch (err) {
