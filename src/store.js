@@ -164,6 +164,7 @@ async function resetSession(phoneNumber) {
   await ensureTable();
   await pool.query(`DELETE FROM whatsapp_sessions WHERE phone_number = $1`, [phoneNumber]);
 }
+
 /**
  * Used by the retargeting job (see retargeting.js) to find leads who
  * said "not right now" a specific number of days ago and haven't been
