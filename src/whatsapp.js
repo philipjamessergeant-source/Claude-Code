@@ -9,23 +9,18 @@
  *   WHATSAPP_PHONE_NUMBER_ID - the phone number ID from Meta's API Setup panel
  *   WHATSAPP_API_VERSION    - e.g. "v19.0" (optional, defaults below)
  */
-
 const axios = require("axios");
-
 const API_VERSION = process.env.WHATSAPP_API_VERSION || "v19.0";
-
 function apiUrl() {
   const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID;
   return `https://graph.facebook.com/${API_VERSION}/${phoneNumberId}/messages`;
 }
-
 function authHeaders() {
   return {
     Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
     "Content-Type": "application/json",
   };
 }
-
 /**
  * Converts one of our internal message objects into a WhatsApp Cloud API
  * payload. Supports two types:
@@ -45,7 +40,6 @@ function buildPayload(toPhoneNumber, message) {
       text: { body: message.text },
     };
   }
-
   if (message.type === "list") {
     return {
       messaging_product: "whatsapp",
@@ -70,10 +64,8 @@ function buildPayload(toPhoneNumber, message) {
       },
     };
   }
-
   throw new Error(`Unknown message type: ${message.type}`);
 }
-
 async function sendMessage(toPhoneNumber, message) {
   const payload = buildPayload(toPhoneNumber, message);
   try {
@@ -85,7 +77,6 @@ async function sendMessage(toPhoneNumber, message) {
     throw err;
   }
 }
-
 async function sendMessages(toPhoneNumber, messages) {
   const results = [];
   for (const message of messages) {
@@ -96,7 +87,43 @@ async function sendMessages(toPhoneNumber, messages) {
   }
   return results;
 }
+/**
+ * Sends an approved WhatsApp message template. Unlike sendMessage, this
+ * works even outside the 24-hour customer service window - this is the
+ * only reliable way to reach Areeva with lead notifications, since her
+ * window with the bot number closes after 24 hours of inactivity and a
+ * normal text message (sendMessage) silently fails after that point
+ * (Meta error code 131047 - "Re-engagement message").
+ *
+ * `parameters` must be an array of strings, in order, matching the
+ * {{1}}, {{2}}, {{3}}... variables in the approved template body.
+ */
+async function sendTemplateMessage(toPhoneNumber, templateName, languageCode, parameters) {
+  const payload = {
+    messaging_product: "whatsapp",
+    to: toPhoneNumber,
+    type: "template",
+    template: {
+      name: templateName,
+      language: { code: languageCode },
+      components: [
+        {
+          type: "body",
+          parameters: parameters.map((text) => ({ type: "text", text })),
+        },
+      ],
+    },
+  };
 
+  try {
+    const response = await axios.post(apiUrl(), payload, { headers: authHeaders() });
+    return response.data;
+  } catch (err) {
+    const detail = err.response?.data || err.message;
+    console.error("Failed to send WhatsApp template message:", JSON.stringify(detail));
+    throw err;
+  }
+}
 /**
  * Extracts the user's reply from an incoming webhook message object.
  * Returns { text, buttonId } - buttonId is set only if the user tapped
@@ -119,5 +146,4 @@ function parseIncomingMessage(message) {
   }
   return { text: "", buttonId: null };
 }
-
-module.exports = { sendMessage, sendMessages, parseIncomingMessage };
+module.exports = { sendMessage, sendMessages, sendTemplateMessage, parseIncomingMessage };
