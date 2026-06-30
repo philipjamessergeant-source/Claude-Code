@@ -16,6 +16,34 @@
  *   then an explicit intent checkpoint before any handoff to Areeva.
  * - The closing language is honest about response time ("shortly"), not
  *   "1-2 business days", and explicitly stays on WhatsApp throughout.
+ *
+ * UX note: the final intent checkpoint (awaiting_intent) uses WhatsApp's
+ * "buttons" interactive type rather than "list". Lists require an extra
+ * tap to open a hidden menu before the two options ("Yes, please reach
+ * out" / "Not right now") are visible, which was causing customers to
+ * think the conversation had ended after the message text, since no
+ * options appeared to be immediately visible or actionable. Buttons show
+ * both options directly in the chat with no extra tap required. Only
+ * used here (and in ended_soft_decline's resume prompt) since WhatsApp
+ * buttons support a max of 3 options - every other question in this flow
+ * has 4+ options and needs to stay as a list.
+ *
+ * Budget options note: the lowest tier (id: under_5k) is deliberately
+ * placed LAST in the list and labelled "Flexible, let's discuss" rather
+ * than "Under R5,000". The smallest number was sitting first in the
+ * list, which anchored it as the perceived "starting point" or baseline
+ * customers felt they needed to negotiate up from, rather than being
+ * read as the smallest, least typical option for 10+ person gifting.
+ * The id stays under_5k unchanged - only the label and position changed
+ * - since recommendationText(), notifyAreeva's BUDGET_LABELS, and all
+ * stored session data key off this id, not the display label.
+ *
+ * The "unsure" tier was removed from the visible options entirely once
+ * under_5k was reworded to "Flexible, let's discuss", since the two had
+ * become functionally redundant - both signalled "no firm number yet".
+ * recommendationText() and notifyAreeva's BUDGET_LABELS still have an
+ * "unsure" case/entry for safety (harmless, just unreachable now via the
+ * button flow) in case any old session data still references it.
  */
 
 const PRODUCTS = {
@@ -43,12 +71,11 @@ const GUEST_COUNT_OPTIONS = [
 ];
 
 const BUDGET_OPTIONS = [
-  { id: "under_5k", title: "Under R5,000" },
-  { id: "5k_15k", title: "R5,000 - R15,000" },
-  { id: "15k_30k", title: "R15,000 - R30,000" },
-  { id: "30k_50k", title: "R30,000 - R50,000" },
   { id: "50k_plus", title: "R50,000+" },
-  { id: "unsure", title: "Not sure yet" },
+  { id: "30k_50k", title: "R30,000 - R50,000" },
+  { id: "15k_30k", title: "R15,000 - R30,000" },
+  { id: "5k_15k", title: "R5,000 - R15,000" },
+  { id: "under_5k", title: "Flexible, let's discuss" },
 ];
 
 const HAS_COMPANY_OPTIONS = [
@@ -384,10 +411,8 @@ const flow = {
     return {
       messages: [
         {
-          type: "list",
-          header: "Next step",
+          type: "buttons",
           body: intentCheckpointMessage(eventType),
-          buttonText: "Choose an option",
           options: INTENT_OPTIONS,
         },
       ],
@@ -402,10 +427,8 @@ const flow = {
       return {
         messages: [
           {
-            type: "list",
-            header: "Next step",
+            type: "buttons",
             body: "Just to confirm, should we go ahead?",
-            buttonText: "Choose an option",
             options: INTENT_OPTIONS,
           },
         ],
@@ -468,12 +491,10 @@ const flow = {
     return {
       messages: [
         {
-          type: "list",
-          header: "Next step",
+          type: "buttons",
           body: `${greeting} We've still got everything you shared with us earlier about your ${
             EVENT_TYPE_LABELS_FOR_RESUME[d.eventType] || "event"
           }. Would you like our team to jump into this chat now to talk through options?`,
-          buttonText: "Choose an option",
           options: INTENT_OPTIONS,
         },
       ],
