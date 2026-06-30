@@ -37,6 +37,12 @@
  *   AREEVA_WHATSAPP_NUMBER - Areeva's WhatsApp number in international
  *                            format, e.g. "27821234567" (no + or spaces)
  *   If this is not set, the module just logs instead of sending.
+ *
+ * Budget label note: under_5k is labelled "Flexible / let's discuss"
+ * here to match the customer-facing button wording in flow.js. This was
+ * previously "Under R5,000", which gave Areeva the original anchoring
+ * impression flow.js was specifically changed to avoid - the underlying
+ * id (under_5k) is unchanged, only this display label.
  */
 const { sendTemplateMessage } = require("./whatsapp");
 
@@ -51,7 +57,7 @@ const GUEST_COUNT_LABELS = {
   "100_plus": "100+",
 };
 const BUDGET_LABELS = {
-  under_5k: "Under R5,000",
+  under_5k: "Flexible / let's discuss",
   "5k_15k": "R5,000 - R15,000",
   "15k_30k": "R15,000 - R30,000",
   "30k_50k": "R30,000 - R50,000",
