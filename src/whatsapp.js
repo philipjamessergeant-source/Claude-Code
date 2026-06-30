@@ -23,13 +23,22 @@ function authHeaders() {
 }
 /**
  * Converts one of our internal message objects into a WhatsApp Cloud API
- * payload. Supports two types:
+ * payload. Supports three types:
  *   { type: "text", text: "..." }
  *   { type: "list", header, body, buttonText, options: [{id, title}] }
+ *   { type: "buttons", body, options: [{id, title}] }
  *
  * WhatsApp's interactive list messages support a maximum of 10 rows per
- * list. All our option lists (event type, guest count, budget, intent)
- * are well under that limit, so no pagination logic is needed here.
+ * list. All our option lists (event type, guest count, budget) are well
+ * under that limit, so no pagination logic is needed here.
+ *
+ * WhatsApp's interactive reply buttons support a maximum of 3 buttons,
+ * and crucially show each option as an immediately visible, tappable
+ * button right in the chat - no extra "tap to open menu" step like
+ * lists require. Use "buttons" instead of "list" for any 2-3 option
+ * question where clarity matters most (e.g. the final yes/not-now
+ * intent checkpoint), since customers were missing the list-style
+ * prompt and assuming the conversation had already ended.
  */
 function buildPayload(toPhoneNumber, message) {
   if (message.type === "text") {
@@ -60,6 +69,23 @@ function buildPayload(toPhoneNumber, message) {
               })),
             },
           ],
+        },
+      },
+    };
+  }
+  if (message.type === "buttons") {
+    return {
+      messaging_product: "whatsapp",
+      to: toPhoneNumber,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: message.body },
+        action: {
+          buttons: message.options.map((opt) => ({
+            type: "reply",
+            reply: { id: opt.id, title: opt.title },
+          })),
         },
       },
     };
@@ -127,8 +153,8 @@ async function sendTemplateMessage(toPhoneNumber, templateName, languageCode, pa
 /**
  * Extracts the user's reply from an incoming webhook message object.
  * Returns { text, buttonId } - buttonId is set only if the user tapped
- * a list option; text is the raw text otherwise (or the option's title,
- * for logging/readability, when a list option was selected).
+ * a list option or reply button; text is the raw text otherwise (or the
+ * option's title, for logging/readability, when an option was tapped).
  */
 function parseIncomingMessage(message) {
   if (message.type === "text") {
