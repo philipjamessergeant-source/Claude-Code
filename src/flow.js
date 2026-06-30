@@ -19,14 +19,21 @@
  *
  * UX note: the final intent checkpoint (awaiting_intent) uses WhatsApp's
  * "buttons" interactive type rather than "list". Lists require an extra
- * tap to open a hidden menu before the two options ("Yes, please reach
- * out" / "Not right now") are visible, which was causing customers to
- * think the conversation had ended after the message text, since no
- * options appeared to be immediately visible or actionable. Buttons show
- * both options directly in the chat with no extra tap required. Only
- * used here (and in ended_soft_decline's resume prompt) since WhatsApp
+ * tap to open a hidden menu before the two options ("Yes, reach out" /
+ * "Not right now") are visible, which was causing customers to think the
+ * conversation had ended after the message text, since no options
+ * appeared to be immediately visible or actionable. Buttons show both
+ * options directly in the chat with no extra tap required. Only used
+ * here (and in ended_soft_decline's resume prompt) since WhatsApp
  * buttons support a max of 3 options - every other question in this flow
  * has 4+ options and needs to stay as a list.
+ *
+ * IMPORTANT: WhatsApp reply button titles have a hard 20-character limit
+ * (Meta error 131009 if exceeded - this is NOT enforced for list row
+ * titles, only buttons). The original "Yes, please reach out" was 22
+ * characters and caused every intent-checkpoint message to fail to send
+ * once buttons replaced lists here. Keep both INTENT_OPTIONS titles at
+ * or under 20 characters if this wording is ever changed again.
  *
  * Budget options note: the lowest tier (id: under_5k) is deliberately
  * placed LAST in the list and labelled "Flexible, let's discuss" rather
@@ -84,7 +91,7 @@ const HAS_COMPANY_OPTIONS = [
 ];
 
 const INTENT_OPTIONS = [
-  { id: "yes_contact", title: "Yes, please reach out" },
+  { id: "yes_contact", title: "Yes, reach out" },
   { id: "not_now", title: "Not right now" },
 ];
 
